@@ -1,0 +1,152 @@
+[
+  {
+    "id": 1,
+    "name": "Pop",
+    "description": "Nhạc đại chúng, giai điệu bắt tai, dễ nghe và phổ biến toàn cầu.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 2,
+    "name": "Rock",
+    "description": "Guitar điện, trống mạnh, năng lượng cao và mạnh mẽ.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 3,
+    "name": "Jazz",
+    "description": "Ứng tấu, phức tạp về hòa âm, nguồn gốc từ New Orleans đầu thế kỷ 20.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 4,
+    "name": "Electronic",
+    "description": "Nhạc máy tính, synthesizer, sản xuất hoàn toàn bằng thiết bị điện tử.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 5,
+    "name": "Acoustic",
+    "description": "Nhạc mộc, không khuếch đại điện tử, âm thanh tự nhiên và gần gũi.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 6,
+    "name": "R&B",
+    "description": "Rhythm and blues, soul hiện đại, kết hợp giữa nhịp điệu và giai điệu cảm xúc.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 7,
+    "name": "Hip-hop",
+    "description": "Rap, beat nặng, văn hóa đường phố và lời ca kể chuyện.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 8,
+    "name": "Classical",
+    "description": "Nhạc cổ điển phương Tây, sáng tác từ thế kỷ 17-19, biểu diễn bằng nhạc cụ truyền thống.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 9,
+    "name": "Country",
+    "description": "Nhạc đồng quê Mỹ, guitar thùng, lời ca về cuộc sống nông thôn và tình yêu.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 10,
+    "name": "Metal",
+    "description": "Rock nặng, guitar méo, tiết tấu nhanh và âm lượng lớn.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 11,
+    "name": "Indie",
+    "description": "Nhạc độc lập, không thuộc hãng đĩa lớn, phong cách đa dạng và thực nghiệm.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 12,
+    "name": "Blues",
+    "description": "Gốc rễ nhạc Mỹ, xuất phát từ cộng đồng người Mỹ gốc Phi, cảm xúc chân thật.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 13,
+    "name": "Reggae",
+    "description": "Nhạc Jamaica, nhịp offbeat đặc trưng, lời ca về hòa bình và tự do.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 14,
+    "name": "Soul",
+    "description": "Cảm xúc sâu sắc, gốc R&B cổ, giọng hát nội tâm và mạnh mẽ.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 15,
+    "name": "J-Pop",
+    "description": "Nhạc pop Nhật Bản, kết hợp âm nhạc phương Tây với văn hóa Nhật Bản độc đáo.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 16,
+    "name": "Latin",
+    "description": "Nhạc Latin Mỹ, tiết tấu sôi động, bao gồm salsa, reggaeton và bossa nova.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 17,
+    "name": "K-Pop",
+    "description": "Nhạc pop Hàn Quốc, sản xuất chuyên nghiệp, kết hợp múa và hình ảnh bắt mắt.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 18,
+    "name": "V-Pop",
+    "description": "Nhạc pop Việt Nam, kết hợp âm nhạc hiện đại với bản sắc văn hóa Việt.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 19,
+    "name": "Dance",
+    "description": "Nhạc sàn, BPM cao, thiết kế để nhảy múa tại các câu lạc bộ và lễ hội.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 20,
+    "name": "Alternative",
+    "description": "Ngoài mainstream, phong cách thực nghiệm và không theo khuôn mẫu thương mại.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 21,
+    "name": "Lo-fi",
+    "description": "Chất lượng âm thanh thấp cố ý, chill và thư giãn, phổ biến khi học hoặc làm việc.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 22,
+    "name": "Ambient",
+    "description": "Nhạc nền, thiền định, tạo không gian âm thanh thay vì giai điệu rõ ràng.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 23,
+    "name": "Funk",
+    "description": "Groove, bass nổi bật, tiết tấu syncopated và năng lượng vũ trường.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 24,
+    "name": "Gospel",
+    "description": "Nhạc tôn giáo Cơ Đốc, hợp xướng mạnh mẽ, lời ca ngợi ca và đức tin.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  },
+  {
+    "id": 25,
+    "name": "World Music",
+    "description": "Nhạc dân tộc toàn cầu, kết hợp các nền văn hóa âm nhạc truyền thống từ khắp thế giới.",
+    "created_at": "2026-04-09 17:44:19.421179"
+  }
+]
