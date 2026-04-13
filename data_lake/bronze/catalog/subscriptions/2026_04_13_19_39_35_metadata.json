@@ -1,9 +1,0 @@
-{
-  "created_at": "2026-04-13T19:39:35.853880+00:00",
-  "source_table": "subscriptions",
-  "row_count": 800,
-  "etl_run_id": 3,
-  "extract_from": "2026-04-13T19:36:22.115432+00:00",
-  "extract_to": "2026-04-13T19:39:33.744319+00:00",
-  "file": "2026_04_13_19_39_35.json"
-}
