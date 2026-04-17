@@ -1,0 +1,85 @@
+"""
+transforms/like_transformer.py
+Module làm sạch và biến đổi dữ liệu cho bảng Event: likes.
+Xử lý sự kiện người dùng thích bài hát.
+"""
+
+import logging
+import pandas as pd
+
+log = logging.getLogger(__name__)
+
+
+def transform(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Hàm làm sạch dữ liệu bảng likes.
+    Trả về Tuple: (Dữ liệu sạch, Dữ liệu lỗi)
+    """
+    if df is None or df.empty:
+        log.warning("    [likes] DataFrame rỗng, không có gì để transform.")
+        return df, pd.DataFrame()
+
+    # 1. Khai báo danh sách các cột mục tiêu dựa trên Schema
+    target_columns = ["like_id", "user_id", "song_id", "liked_at"]
+
+    # Bổ sung các cột bị thiếu bằng None
+    for col in target_columns:
+        if col not in df.columns:
+            df[col] = None
+
+    # 2. Xử lý ép kiểu sơ bộ để Validate
+    df["like_id"] = pd.to_numeric(df["like_id"], errors="coerce")
+    df["user_id"] = pd.to_numeric(df["user_id"], errors="coerce")
+    df["song_id"] = pd.to_numeric(df["song_id"], errors="coerce")
+
+    # 3. Ràng buộc NOT NULL
+    # Đối với sự kiện like, nếu mất ID like, ID user hoặc ID song thì dữ liệu là rác
+    mask_valid = (
+            df["like_id"].notna() & (df["like_id"] > 0) &
+            df["user_id"].notna() & (df["user_id"] > 0) &
+            df["song_id"].notna() & (df["song_id"] > 0)
+    )
+
+    # 4. TÁCH DỮ LIỆU LỖI (Rejected)
+    df_rejected = df[~mask_valid].copy()
+    if not df_rejected.empty:
+        df_rejected["reject_reason"] = "Vi phạm NOT NULL (thiếu like_id, user_id hoặc song_id)"
+        log.info(f"    [likes] Tách {len(df_rejected):,} dòng lỗi vào file rejected.")
+
+    # 5. TÁCH DỮ LIỆU SẠCH (Clean)
+    df_clean = df[mask_valid].copy()
+
+    if df_clean.empty:
+        return df_clean[target_columns], df_rejected
+
+    # Ép kiểu Int64 an toàn cho ID
+    df_clean["like_id"] = df_clean["like_id"].astype("Int64")
+    df_clean["user_id"] = df_clean["user_id"].astype("Int64")
+    df_clean["song_id"] = df_clean["song_id"].astype("Int64")
+
+    # 6. Xử lý Ngày tháng (Timestamp) và Giá trị mặc định
+    df_clean["liked_at"] = pd.to_datetime(df_clean["liked_at"], errors="coerce")
+
+    # Nếu hệ thống gửi sự kiện bị thiếu timestamp, lấy thời điểm hiện tại
+    df_clean["liked_at"] = df_clean["liked_at"].fillna(pd.Timestamp.now())
+
+    # 7. Loại bỏ bản ghi trùng lặp (Deduplicate)
+    before_dedup = len(df_clean)
+
+    # Sắp xếp tăng dần theo thời gian: ưu tiên ghi nhận lần bấm "Like" đầu tiên
+    df_clean = df_clean.sort_values(by=["user_id", "song_id", "liked_at"], ascending=[True, True, True])
+
+    # Bước 7a: Xóa trùng lặp theo Khóa chính (like_id)
+    df_clean = df_clean.drop_duplicates(subset=["like_id"], keep="first")
+
+    # Bước 7b: Xóa trùng lặp theo cặp (user_id, song_id) để bảo vệ ràng buộc UNIQUE
+    # Điều này chặn trường hợp 1 user spam API để like 1 bài hát nhiều lần
+    df_clean = df_clean.drop_duplicates(subset=["user_id", "song_id"], keep="first")
+
+    if before_dedup - len(df_clean) > 0:
+        log.info(f"    [likes] Loại bỏ {before_dedup - len(df_clean):,} dòng trùng lặp (vi phạm PK hoặc UNIQUE).")
+
+    # 8. Trả về đúng danh sách cột mục tiêu
+    df_clean = df_clean[target_columns]
+
+    return df_clean, df_rejected
