@@ -354,31 +354,31 @@ def load_dim_user(conn, silver_catalog: Path) -> int:
         log.info(f"  [dim_user] Đã insert {len(new_rows):,} user mới")
 
     # SCD2: expire bản cũ → INSERT bản mới
-    for uid, old_key, r, src, reg_date in scd2_updates:
-        # Expire bản cũ
-        cur.execute(
-            """
-            UPDATE dw.dim_user
-            SET    is_current  = false,
-                   expiry_date = %s
-            WHERE  user_key    = %s
-            """,
-            (yesterday, old_key)
-        )
-        # Insert bản mới
-        cur.execute(
-            """
-            INSERT INTO dw.dim_user
-                (user_id, email, display_name, role, plan, country, gender,
-                 registration_date, effective_date, expiry_date, is_current)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,true)
-            """,
-            (uid,
-             str(r.email)        if pd.notna(r.email)        else None,
-             str(r.display_name) if pd.notna(r.display_name) else None,
-             src["role"], src["plan"], src["country"], src["gender"],
-             reg_date, today)
-        )
+    # for uid, old_key, r, src, reg_date in scd2_updates:
+    #     # Expire bản cũ
+    #     cur.execute(
+    #         """
+    #         UPDATE dw.dim_user
+    #         SET    is_current  = false,
+    #                expiry_date = %s
+    #         WHERE  user_key    = %s
+    #         """,
+    #         (yesterday, old_key)
+    #     )
+    #     # Insert bản mới
+    #     cur.execute(
+    #         """
+    #         INSERT INTO dw.dim_user
+    #             (user_id, email, display_name, role, plan, country, gender,
+    #              registration_date, effective_date, expiry_date, is_current)
+    #         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,true)
+    #         """,
+    #         (uid,
+    #          str(r.email)        if pd.notna(r.email)        else None,
+    #          str(r.display_name) if pd.notna(r.display_name) else None,
+    #          src["role"], src["plan"], src["country"], src["gender"],
+    #          reg_date, today)
+    #     )
 
     if scd2_updates:
         # Tách dữ liệu ra thành danh sách các khóa cũ và các dòng dữ liệu mới

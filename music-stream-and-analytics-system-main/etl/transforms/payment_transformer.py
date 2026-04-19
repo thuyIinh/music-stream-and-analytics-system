@@ -19,6 +19,7 @@ def transform(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         log.warning("    [payments] DataFrame rỗng, không có gì để transform.")
         return df, pd.DataFrame()
 
+
     # 1. Khai báo danh sách các cột mục tiêu dựa trên Schema
     target_columns = [
         "payment_id", "user_id", "amount", "currency", "plan",
@@ -43,7 +44,8 @@ def transform(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
             df["user_id"].notna() & (df["user_id"] > 0) &
             df["amount"].notna() & (df["amount"] >= 0) &
             df["plan"].notna() & (df["plan"].astype(str).str.strip() != "") &
-            df["duration_days"].notna() & (df["duration_days"] > 0)
+            df["duration_days"].notna() & (df["duration_days"] > 0) &
+            df["paid_at"].notna()
     )
 
     # 4. TÁCH DỮ LIỆU LỖI (Rejected)
@@ -86,8 +88,8 @@ def transform(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     # 7. Xử lý Ngày tháng (Timestamp)
     df_clean["paid_at"] = pd.to_datetime(df_clean["paid_at"], errors="coerce")
 
-    # Nếu hệ thống gửi sự kiện bị thiếu timestamp, lấy thời điểm hiện tại
-    df_clean["paid_at"] = df_clean["paid_at"].fillna(pd.Timestamp.now())
+    # # Nếu hệ thống gửi sự kiện bị thiếu timestamp, lấy thời điểm hiện tại
+    # df_clean["paid_at"] = df_clean["paid_at"].fillna(pd.Timestamp.now())
 
     # 8. Loại bỏ bản ghi trùng lặp (Deduplicate)
     before_dedup = len(df_clean)

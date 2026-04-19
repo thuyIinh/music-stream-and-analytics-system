@@ -19,6 +19,7 @@ def transform(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         log.warning("    [follows] DataFrame rỗng, không có gì để transform.")
         return df, pd.DataFrame()
 
+
     # 1. Khai báo danh sách các cột mục tiêu dựa trên Schema
     target_columns = ["follow_id", "user_id", "artist_id", "followed_at"]
 
@@ -37,7 +38,8 @@ def transform(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     mask_valid = (
             df["follow_id"].notna() & (df["follow_id"] > 0) &
             df["user_id"].notna() & (df["user_id"] > 0) &
-            df["artist_id"].notna() & (df["artist_id"] > 0)
+            df["artist_id"].notna() & (df["artist_id"] > 0) &
+            df["followed_at"].notna()
     )
 
     # 4. TÁCH DỮ LIỆU LỖI (Rejected)
@@ -61,7 +63,7 @@ def transform(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     df_clean["followed_at"] = pd.to_datetime(df_clean["followed_at"], errors="coerce")
 
     # Nếu hệ thống gửi sự kiện bị thiếu timestamp, lấy thời điểm hiện tại chạy pipeline
-    df_clean["followed_at"] = df_clean["followed_at"].fillna(pd.Timestamp.now())
+    # df_clean["followed_at"] = df_clean["followed_at"].fillna(pd.Timestamp.now())
 
     # 7. Loại bỏ bản ghi trùng lặp (Deduplicate)
     before_dedup = len(df_clean)

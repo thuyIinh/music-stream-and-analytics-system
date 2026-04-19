@@ -19,6 +19,7 @@ def transform(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         log.warning("    [likes] DataFrame rỗng, không có gì để transform.")
         return df, pd.DataFrame()
 
+
     # 1. Khai báo danh sách các cột mục tiêu dựa trên Schema
     target_columns = ["like_id", "user_id", "song_id", "liked_at"]
 
@@ -37,7 +38,8 @@ def transform(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     mask_valid = (
             df["like_id"].notna() & (df["like_id"] > 0) &
             df["user_id"].notna() & (df["user_id"] > 0) &
-            df["song_id"].notna() & (df["song_id"] > 0)
+            df["song_id"].notna() & (df["song_id"] > 0) &
+            df["liked_at"].notna()
     )
 
     # 4. TÁCH DỮ LIỆU LỖI (Rejected)
@@ -60,8 +62,8 @@ def transform(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     # 6. Xử lý Ngày tháng (Timestamp) và Giá trị mặc định
     df_clean["liked_at"] = pd.to_datetime(df_clean["liked_at"], errors="coerce")
 
-    # Nếu hệ thống gửi sự kiện bị thiếu timestamp, lấy thời điểm hiện tại
-    df_clean["liked_at"] = df_clean["liked_at"].fillna(pd.Timestamp.now())
+    # # Nếu hệ thống gửi sự kiện bị thiếu timestamp, lấy thời điểm hiện tại
+    # df_clean["liked_at"] = df_clean["liked_at"].fillna(pd.Timestamp.now())
 
     # 7. Loại bỏ bản ghi trùng lặp (Deduplicate)
     before_dedup = len(df_clean)

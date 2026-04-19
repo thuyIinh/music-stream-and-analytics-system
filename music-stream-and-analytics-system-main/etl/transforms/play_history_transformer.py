@@ -25,6 +25,7 @@ def transform(df: pd.DataFrame, songs_df: pd.DataFrame = None) -> tuple[pd.DataF
     if songs_df is None or songs_df.empty:
         raise ValueError("[play_history] Lỗi nghiêm trọng: Tham số 'songs_df' bị trống. Không thể thực hiện Lookup!")
 
+
     # 1. Khai báo danh sách các cột mục tiêu cho tầng Silver (Đã Denormalize)
     target_columns = [
         "play_id", "user_id", "song_id", "played_at", "duration_played",
@@ -92,9 +93,9 @@ def transform(df: pd.DataFrame, songs_df: pd.DataFrame = None) -> tuple[pd.DataF
     df_clean["duration"] = pd.to_numeric(df_clean["duration"])
 
     # completion_rate = duration_played / duration
-    df_clean["completion_rate"] = df_clean.apply(
-        lambda r: min(r["duration_played"] / r["duration"], 1.0), axis=1
-    )
+    df_clean["completion_rate"] = (
+            df_clean["duration_played"] / df_clean["duration"]
+    ).clip(upper=1.0).round(4)
 
     # Tính is_completed và is_skipped
     df_clean["is_completed"] = df_clean["completion_rate"] >= 0.8
@@ -121,10 +122,13 @@ def transform(df: pd.DataFrame, songs_df: pd.DataFrame = None) -> tuple[pd.DataF
     df_clean["_is_new_session"] = df_clean["_gap_min"] > SESSION_GAP_MINUTES
 
     # Tạo Session ID (Dùng hàm cumsum để đếm số session của từng user)
+    date_str = df_clean["played_at"].dt.strftime("%Y%m%d").iloc[0]  # lấy ngày của batch
     df_clean["session_idx"] = df_clean.groupby("user_id")["_is_new_session"].cumsum().astype(str)
-
-    # Ghép chuỗi tạo ID độc nhất: vd "u123_s1", "u123_s2"
-    df_clean["session_id"] = "u" + df_clean["user_id"].astype(str) + "_s" + df_clean["session_idx"]
+    df_clean["session_id"] = (
+            "u" + df_clean["user_id"].astype(str)
+            + "_" + date_str
+            + "_s" + df_clean["session_idx"]
+    )
 
     # Xóa các cột tạm phục vụ tính toán session
     df_clean.drop(columns=["_prev_played", "_gap_min", "_is_new_session", "session_idx"], inplace=True)

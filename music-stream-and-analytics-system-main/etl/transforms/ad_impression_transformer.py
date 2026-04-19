@@ -19,6 +19,7 @@ def transform(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         log.warning("    [ad_impressions] DataFrame rỗng, không có gì để transform.")
         return df, pd.DataFrame()
 
+
     # 1. Khai báo danh sách các cột mục tiêu
     target_columns = ["impression_id", "ad_id", "user_id", "shown_at", "is_clicked"]
 
@@ -37,7 +38,8 @@ def transform(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     mask_valid = (
             df["impression_id"].notna() & (df["impression_id"] > 0) &
             df["ad_id"].notna() & (df["ad_id"] > 0) &
-            df["user_id"].notna() & (df["user_id"] > 0)
+            df["user_id"].notna() & (df["user_id"] > 0) &
+            df["shown_at"].notna()
     )
 
     # 4. TÁCH DỮ LIỆU LỖI (Rejected)
@@ -61,7 +63,7 @@ def transform(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     df_clean["shown_at"] = pd.to_datetime(df_clean["shown_at"], errors="coerce")
 
     # Event thì nên có thời gian chuẩn, nhưng nếu hệ thống bắn thiếu thì fill DEFAULT NOW() theo schema
-    df_clean["shown_at"] = df_clean["shown_at"].fillna(pd.Timestamp.now())
+    # df_clean["shown_at"] = df_clean["shown_at"].fillna(pd.Timestamp.now())
 
     # is_clicked: DEFAULT false
     df_clean["is_clicked"] = df_clean["is_clicked"].fillna(False).astype(bool)
