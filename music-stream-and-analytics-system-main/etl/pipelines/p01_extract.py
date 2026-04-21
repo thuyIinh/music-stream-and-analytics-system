@@ -158,7 +158,7 @@ def extract_reference_table(conn, table: str) -> list:
 
 def run(start_time: datetime = None,reset: bool = False):
     if start_time is None:
-        start_time = datetime.now()
+        start_time = datetime.now(VN_TZ)
     last_run     = load_last_run(reset=reset)
     extract_from = last_run["next_extract_from"]
     extract_to   = start_time.isoformat()

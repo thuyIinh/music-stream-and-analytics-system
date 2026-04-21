@@ -5,45 +5,39 @@ PIPELINE 3: SILVER → GOLD
 Mục đích: Đọc Parquet từ Silver, tính aggregate đa chiều,
           lưu ra Gold layer chuẩn bị cho Pipeline 4 (Load DW).
 
-Thay đổi so với phiên bản gốc:
-  [1] Chỉ tính lượt nghe hợp lệ: duration_played > 20 giây
-  [2] Gold Parquet chia từng ngày dữ liệu (play_date / show_date),
-      không gộp nhiều ngày vào 1 file theo ngày chạy ETL
-
-Outputs:
-  gold/daily_play_stats/{date}.parquet
-  gold/daily_user_stats/{date}.parquet
-  gold/hourly_stats/{date}.parquet
-  gold/daily_genre_stats/{date}.parquet
-  gold/daily_ad_stats/{date}.parquet
-
-Chạy: python pipelines/p03_silver_to_gold.py
+Quy tắc ngày tháng:
+  - Ngày xử lý (processing_date) = TÊN FILE parquet ở Silver.
+  - Các hàm aggregate KHÔNG tạo thêm cột date từ data, KHÔNG GROUP BY ngày.
+  - File Gold output được đặt tên theo processing_date (tên file silver gốc).
+  - Chạy với --date YYYY-MM-DD: chỉ load file silver tên khớp đúng ngày đó.
+  - Nếu không truyền --date: tự dùng ngày hôm nay (datetime.now()).
 """
 
 import json
 import logging
-from datetime import date
+import argparse
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+import psycopg2
 
 # ─── logging ────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
+    format="%(asctime)s  [%(levelname)s]  %(message)s",
+    datefmt="%H:%M:%S",
 )
 log = logging.getLogger("p03_silver_to_gold")
 
 # ─── constants ──────────────────────────────────────────────────────────────
-MIN_LISTEN_SECONDS = 20   # [1] ngưỡng tính 1 lượt nghe hợp lệ
+MIN_LISTEN_SECONDS = 20
 
 # ─── paths ──────────────────────────────────────────────────────────────────
-BASE_DIR = Path(__file__).resolve().parent.parent  # etl/
-DATA_LAKE = BASE_DIR / "Data_lake"
+BASE_DIR   = Path(__file__).resolve().parent.parent
+DATA_LAKE  = BASE_DIR / "data_lake"
 SILVER_DIR = DATA_LAKE / "silver"
 GOLD_DIR   = DATA_LAKE / "gold"
-LAST_RUN   = DATA_LAKE / "_last_run.json"
 
 SILVER_PLAY   = SILVER_DIR / "events" / "play_history"
 SILVER_AD_IMP = SILVER_DIR / "events" / "ad_impressions"
@@ -54,10 +48,123 @@ GOLD_HOURLY      = GOLD_DIR / "hourly_stats"
 GOLD_GENRE_STATS = GOLD_DIR / "daily_genre_stats"
 GOLD_AD_STATS    = GOLD_DIR / "daily_ad_stats"
 
+# ─── database config ────────────────────────────────────────────────────────
+DB_CONFIG = {
+    "host":     "localhost",
+    "port":     5432,
+    "dbname":   "music_app_db",
+    "user":     "postgres",
+    "password": "nam2005S",
+}
 
-# ════════════════════════════════════════════════════════════════════════════
-# HELPERS
-# ════════════════════════════════════════════════════════════════════════════
+PIPELINE_NAME = "p03_silver_to_gold"
+
+
+# ══════════════════════════════════════════════
+# DATABASE HELPERS
+# ══════════════════════════════════════════════
+
+def get_db_connection():
+    return psycopg2.connect(**DB_CONFIG)
+
+
+def db_start_run(conn, triggered_by: str = "manual") -> int:
+    sql = """
+        INSERT INTO etl_runs (pipeline_name, started_at, status, triggered_by)
+        VALUES (%s, %s, 'running', %s)
+        RETURNING run_id;
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (PIPELINE_NAME, datetime.now(), triggered_by))
+        run_id = cur.fetchone()[0]
+    conn.commit()
+    log.info(f"[DB] etl_runs: Tạo run_id={run_id}")
+    return run_id
+
+
+def db_finish_run(
+    conn,
+    run_id: int,
+    status: str,
+    rows_extracted: int = 0,
+    rows_transformed: int = 0,
+    rows_loaded: int = 0,
+    rows_failed: int = 0,
+    error_message: str = None,
+    started_at: datetime = None,
+) -> None:
+    finished_at = datetime.now()
+    duration = int((finished_at - started_at).total_seconds()) if started_at else None
+    sql = """
+        UPDATE etl_runs
+        SET finished_at       = %s,
+            duration_seconds  = %s,
+            status            = %s,
+            rows_extracted    = %s,
+            rows_transformed  = %s,
+            rows_loaded       = %s,
+            rows_failed       = %s,
+            error_message     = %s
+        WHERE run_id = %s;
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (
+            finished_at, duration, status,
+            rows_extracted, rows_transformed, rows_loaded, rows_failed,
+            error_message, run_id,
+        ))
+    conn.commit()
+    log.info(
+        f"[DB] etl_runs: Cập nhật run_id={run_id} "
+        f"-> status={status}, duration={duration}s"
+    )
+
+
+def db_start_detail(conn, run_id: int, stage: str, table_name: str) -> int:
+    sql = """
+        INSERT INTO etl_run_details (run_id, stage, table_name, started_at, status)
+        VALUES (%s, %s, %s, %s, 'running')
+        RETURNING detail_id;
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (run_id, stage, table_name, datetime.now()))
+        detail_id = cur.fetchone()[0]
+    conn.commit()
+    return detail_id
+
+
+def db_finish_detail(
+    conn,
+    detail_id: int,
+    status: str,
+    rows_in: int = 0,
+    rows_out: int = 0,
+    rows_error: int = 0,
+    message: str = None,
+    started_at: datetime = None,
+) -> None:
+    finished_at = datetime.now()
+    sql = """
+        UPDATE etl_run_details
+        SET finished_at = %s,
+            rows_in     = %s,
+            rows_out    = %s,
+            rows_error  = %s,
+            status      = %s,
+            message     = %s
+        WHERE detail_id = %s;
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (
+            finished_at, rows_in, rows_out, rows_error,
+            status, message, detail_id,
+        ))
+    conn.commit()
+
+
+# ══════════════════════════════════════════════
+# FILE HELPERS
+# ══════════════════════════════════════════════
 
 def ensure_dirs():
     for d in [GOLD_PLAY_STATS, GOLD_USER_STATS,
@@ -65,121 +172,75 @@ def ensure_dirs():
         d.mkdir(parents=True, exist_ok=True)
 
 
-def read_last_run() -> str:
-    """Lấy next_extract_from từ _last_run.json. Mặc định 2020-01-01."""
-    if LAST_RUN.exists():
-        with open(LAST_RUN) as f:
-            data = json.load(f)
-        return data.get("next_extract_from", "2020-01-01T00:00:00")
-    return "2020-01-01T00:00:00"
-
-
-def load_silver_parquets(silver_path: Path, since: str) -> pd.DataFrame:
+def load_silver_parquets(
+    silver_path: Path,
+    target_date: str,
+) -> list[tuple[str, pd.DataFrame]]:
     """
-    Đọc các file {YYYY-MM-DD}.parquet trong silver_path có date >= since.
-    Silver được pipeline 2 lưu theo ngày nên tên file luôn là YYYY-MM-DD.
-    Trả về DataFrame gộp, hoặc DataFrame rỗng nếu không có file phù hợp.
+    Trả về list[(date_str, DataFrame)].
+    date_str = tên file (stem), VD: "2026-04-21".
+
+    Chỉ load file có tên == target_date (YYYY-MM-DD.parquet).
+    Dữ liệu bên trong KHÔNG bao giờ bị filter theo cột ngày trong data.
     """
-    since_date = pd.Timestamp(since)
     files = sorted(silver_path.glob("*.parquet"))
 
     if not files:
         log.warning(f"  Không có file Parquet trong {silver_path}")
-        return pd.DataFrame()
+        return []
 
-    dfs = []
+    target_date_obj = pd.Timestamp(target_date).date()
+    result = []
+
     for f in files:
         try:
-            file_date = pd.Timestamp(f.stem)   # stem = YYYY-MM-DD
-            if file_date >= since_date:
-                dfs.append(pd.read_parquet(f))
-                log.info(f"    Đọc: {f.name}")
+            file_date = pd.Timestamp(f.stem).date()
         except Exception:
-            # Tên file không parse được thành ngày → đọc luôn (an toàn)
-            log.warning(f"    Không parse được ngày từ '{f.name}', đọc luôn.")
-            dfs.append(pd.read_parquet(f))
+            log.warning(f"    Bỏ qua file tên không phải ngày: {f.name}")
+            continue
+        if file_date == target_date_obj:
+            log.info(f"    Đọc file: {f.name}")
+            result.append((f.stem, pd.read_parquet(f)))
 
-    if not dfs:
-        log.info(f"  Không có file mới hơn {since} trong {silver_path}")
-        return pd.DataFrame()
+    if not result:
+        log.info(f"  Không tìm thấy file {target_date}.parquet trong {silver_path}")
 
-    return pd.concat(dfs, ignore_index=True)
-
-
-def filter_valid_plays(ph: pd.DataFrame) -> pd.DataFrame:
-    """
-    [1] Chỉ giữ lượt nghe có duration_played > MIN_LISTEN_SECONDS.
-    Ghi log số bản ghi bị loại để dễ audit.
-    """
-    before  = len(ph)
-    valid   = ph[ph["duration_played"] > MIN_LISTEN_SECONDS].copy()
-    dropped = before - len(valid)
-    log.info(
-        f"  Lọc lượt nghe hợp lệ (> {MIN_LISTEN_SECONDS}s): "
-        f"giữ {len(valid):,} / {before:,} rows  (loại {dropped:,} rows)"
-    )
-    return valid
-
-
-def save_gold(df: pd.DataFrame, gold_path: Path, tag: str,
-              date_col: str) -> int:
-    """
-    [2] Lưu DataFrame ra Gold, chia 1 file Parquet + JSON cho mỗi ngày.
-
-    date_col : cột ngày dùng để partition ('play_date' hoặc 'show_date').
-               Mỗi giá trị unique → 1 file YYYY-MM-DD.parquet + .json.
-
-    Trả về tổng số rows đã lưu.
-    """
+    return result
+def save_gold(df: pd.DataFrame, gold_path: Path, tag: str, date_str: str) -> int:
+    """Lưu DataFrame ra Gold. Tên file = date_str (tên file silver gốc)."""
     if df.empty:
         log.warning(f"  [{tag}] DataFrame rỗng, bỏ qua.")
         return 0
 
     gold_path.mkdir(parents=True, exist_ok=True)
-    total = 0
+    out_parquet = gold_path / f"{date_str}.parquet"
+    out_json    = gold_path / f"{date_str}.json"
 
-    for d in sorted(df[date_col].unique()):
-        day_df  = df[df[date_col] == d].reset_index(drop=True)
-        day_str = str(d)[:10]   # đảm bảo format YYYY-MM-DD
-
-        out_parquet = gold_path / f"{day_str}.parquet"
-        out_json    = gold_path / f"{day_str}.json"
-
-        day_df.to_parquet(out_parquet, index=False, engine="pyarrow")
-        day_df.to_json(out_json, orient="records",
-                       force_ascii=False, indent=2, date_format="iso")
-
-        log.info(
-            f"  [{tag}] ✓ {len(day_df):,} rows "
-            f"→ {out_parquet.relative_to(BASE_DIR)}"
-        )
-        total += len(day_df)
-
-    return total
+    df.to_parquet(out_parquet, index=False, engine="pyarrow")
+    df.to_json(out_json, orient="records", force_ascii=False, indent=2, date_format="iso")
+    log.info(f"  [{tag}] {len(df):,} rows -> {out_parquet.relative_to(BASE_DIR)}")
+    return len(df)
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# AGGREGATIONS — play_history  (toàn bộ dùng ph đã lọc > 20s)
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════
+# AGGREGATIONS — play_history
+#
+# Nguyên tắc: KHÔNG tạo cột date từ data, KHÔNG GROUP BY ngày.
+# Ngày đã được xác định từ tên file bởi caller.
+# Mỗi file silver = 1 ngày → aggregate toàn bộ rồi lưu ra 1 file gold cùng tên.
+# ══════════════════════════════════════════════
 
 def agg_daily_play_stats(ph: pd.DataFrame) -> pd.DataFrame:
-    """
-    GROUP BY song_id, artist_id, genre_id, play_date
-    Tính: play_count, unique_listeners, total_duration,
-          avg_completion_rate, skip_count, completed_count
-    """
-    ph = ph.copy()
-    ph["play_date"] = pd.to_datetime(ph["played_at"]).dt.date
-
+    """GROUP BY song_id, artist_id, genre_id."""
     agg = (
-        ph.groupby(["song_id", "artist_id", "genre_id", "play_date"])
+        ph.groupby(["song_id", "artist_id", "genre_id"])
         .agg(
-            play_count         =("play_id",          "count"),
-            unique_listeners   =("user_id",           "nunique"),
-            total_duration     =("duration_played",   "sum"),
-            avg_completion_rate=("completion_rate",   "mean"),
-            skip_count         =("is_skipped",        "sum"),
-            completed_count    =("is_completed",      "sum"),
+            play_count         =("play_id",         "count"),
+            unique_listeners   =("user_id",          "nunique"),
+            total_duration     =("duration_played",  "sum"),
+            avg_completion_rate=("completion_rate",  "mean"),
+            skip_count         =("is_skipped",       "sum"),
+            completed_count    =("is_completed",     "sum"),
         )
         .reset_index()
     )
@@ -188,23 +249,16 @@ def agg_daily_play_stats(ph: pd.DataFrame) -> pd.DataFrame:
 
 
 def agg_daily_user_stats(ph: pd.DataFrame) -> pd.DataFrame:
-    """
-    GROUP BY user_id, play_date
-    Tính: total_duration_played, total_songs, unique_songs,
-          avg_completion_rate, completed_count, skip_count
-    """
-    ph = ph.copy()
-    ph["play_date"] = pd.to_datetime(ph["played_at"]).dt.date
-
+    """GROUP BY user_id."""
     agg = (
-        ph.groupby(["user_id", "play_date"])
+        ph.groupby(["user_id"])
         .agg(
             total_duration_played=("duration_played", "sum"),
             total_songs          =("play_id",          "count"),
-            unique_songs         =("song_id",           "nunique"),
-            avg_completion_rate  =("completion_rate",   "mean"),
-            completed_count      =("is_completed",      "sum"),
-            skip_count           =("is_skipped",        "sum"),
+            unique_songs         =("song_id",          "nunique"),
+            avg_completion_rate  =("completion_rate",  "mean"),
+            completed_count      =("is_completed",     "sum"),
+            skip_count           =("is_skipped",       "sum"),
         )
         .reset_index()
     )
@@ -214,26 +268,24 @@ def agg_daily_user_stats(ph: pd.DataFrame) -> pd.DataFrame:
 
 def agg_hourly_stats(ph: pd.DataFrame) -> pd.DataFrame:
     """
-    GROUP BY play_date, hour_of_day, day_of_week
-    Tính: play_count, unique_listeners, avg_completion_rate
-
-    play_date được thêm vào group key để save_gold partition theo ngày.
-    hour_of_day / day_of_week ưu tiên dùng cột sẵn có (pipeline 2 đã tính),
-    nếu không có thì tự tính từ played_at.
+    GROUP BY hour_of_day, day_of_week.
+    Hai cột này đã được Pipeline 2 ghi sẵn vào Silver;
+    nếu thiếu thì tính lại từ played_at.
     """
     ph = ph.copy()
-    dt = pd.to_datetime(ph["played_at"])
-
-    ph["play_date"]   = dt.dt.date
-    ph["hour_of_day"] = ph["hour_of_day"] if "hour_of_day" in ph.columns else dt.dt.hour
-    ph["day_of_week"] = ph["day_of_week"] if "day_of_week" in ph.columns else dt.dt.dayofweek
+    if "hour_of_day" not in ph.columns or "day_of_week" not in ph.columns:
+        dt = pd.to_datetime(ph["played_at"])
+        if "hour_of_day" not in ph.columns:
+            ph["hour_of_day"] = dt.dt.hour
+        if "day_of_week" not in ph.columns:
+            ph["day_of_week"] = dt.dt.day_of_week
 
     agg = (
-        ph.groupby(["play_date", "hour_of_day", "day_of_week"])
+        ph.groupby(["hour_of_day", "day_of_week"])
         .agg(
-            play_count         =("play_id",         "count"),
-            unique_listeners   =("user_id",          "nunique"),
-            avg_completion_rate=("completion_rate",  "mean"),
+            play_count         =("play_id",        "count"),
+            unique_listeners   =("user_id",         "nunique"),
+            avg_completion_rate=("completion_rate", "mean"),
         )
         .reset_index()
     )
@@ -242,21 +294,15 @@ def agg_hourly_stats(ph: pd.DataFrame) -> pd.DataFrame:
 
 
 def agg_daily_genre_stats(ph: pd.DataFrame) -> pd.DataFrame:
-    """
-    GROUP BY genre_id, play_date
-    Tính: play_count, unique_listeners, total_duration, avg_completion_rate
-    """
-    ph = ph.copy()
-    ph["play_date"] = pd.to_datetime(ph["played_at"]).dt.date
-    ph = ph[ph["genre_id"].notna()]
-
+    """GROUP BY genre_id."""
+    ph = ph[ph["genre_id"].notna()].copy()
     agg = (
-        ph.groupby(["genre_id", "play_date"])
+        ph.groupby(["genre_id"])
         .agg(
-            play_count         =("play_id",          "count"),
-            unique_listeners   =("user_id",           "nunique"),
-            total_duration     =("duration_played",   "sum"),
-            avg_completion_rate=("completion_rate",   "mean"),
+            play_count         =("play_id",         "count"),
+            unique_listeners   =("user_id",          "nunique"),
+            total_duration     =("duration_played",  "sum"),
+            avg_completion_rate=("completion_rate",  "mean"),
         )
         .reset_index()
     )
@@ -265,20 +311,14 @@ def agg_daily_genre_stats(ph: pd.DataFrame) -> pd.DataFrame:
     return agg
 
 
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════
 # AGGREGATIONS — ad_impressions
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════
 
 def agg_daily_ad_stats(ad: pd.DataFrame) -> pd.DataFrame:
-    """
-    GROUP BY ad_id, show_date
-    Tính: total_impressions, total_clicks, ctr (%)
-    """
-    ad = ad.copy()
-    ad["show_date"] = pd.to_datetime(ad["shown_at"]).dt.date
-
+    """GROUP BY ad_id."""
     agg = (
-        ad.groupby(["ad_id", "show_date"])
+        ad.groupby(["ad_id"])
         .agg(
             total_impressions=("impression_id", "count"),
             total_clicks     =("is_clicked",    "sum"),
@@ -289,112 +329,207 @@ def agg_daily_ad_stats(ad: pd.DataFrame) -> pd.DataFrame:
     return agg
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# MAIN
-# ════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════
+# CORE LOGIC
+# ══════════════════════════════════════════════
 
-def run(run_id: int = None) -> dict:
-    """
-    Chạy toàn bộ Pipeline 3.
-    run_id : etl_runs.run_id để ghi log (None nếu chạy standalone).
-    Trả về dict tổng kết số rows mỗi output.
-    """
-    log.info("=" * 60)
-    log.info("PIPELINE 3: SILVER → GOLD")
-    log.info("=" * 60)
+def process_aggregate(
+    name: str,
+    df: pd.DataFrame,
+    agg_fn,
+    gold_path: Path,
+    date_str: str,
+    conn,
+    run_id: int,
+) -> dict:
+    """Chạy một aggregate và lưu Gold. date_str dùng để đặt tên file output."""
+    log.info(f"--  [{name}]  Bắt đầu  --")
 
-    ensure_dirs()
-    since = read_last_run()
-    log.info(f"  Đọc Silver từ: {since}")
+    detail_started = datetime.now()
+    detail_id = db_start_detail(conn, run_id, stage="silver_to_gold", table_name=name)
 
-    stats = {}
+    rows_in    = len(df)
+    rows_out   = 0
+    rows_error = 0
+    status     = "success"
+    message    = None
 
-    # ── 1. PLAY HISTORY ────────────────────────────────────────
-    log.info("\n[1/2] Đọc silver play_history ...")
-    ph = load_silver_parquets(SILVER_PLAY, since)
-
-    if ph.empty:
-        log.warning("  play_history Silver rỗng — bỏ qua các agg liên quan.")
-        for k in ["daily_play_stats", "daily_user_stats",
-                  "hourly_stats", "daily_genre_stats"]:
-            stats[k] = 0
-    else:
-        log.info(f"  Tổng rows play_history (raw): {len(ph):,}")
-
-        # Ép kiểu
-        ph["played_at"]       = pd.to_datetime(ph["played_at"])
-        ph["duration_played"] = pd.to_numeric(ph["duration_played"], errors="coerce").fillna(0)
-        ph["completion_rate"] = pd.to_numeric(ph["completion_rate"], errors="coerce").fillna(0)
-        ph["is_skipped"]      = ph["is_skipped"].astype(bool)
-        ph["is_completed"]    = ph["is_completed"].astype(bool)
-
-        # [1] Lọc lượt nghe hợp lệ > 20s — 1 lần, dùng chung cho tất cả aggregate
-        ph = filter_valid_plays(ph)
-
-        if ph.empty:
-            log.warning("  Không còn row hợp lệ sau khi lọc 20s.")
-            for k in ["daily_play_stats", "daily_user_stats",
-                      "hourly_stats", "daily_genre_stats"]:
-                stats[k] = 0
+    try:
+        if df.empty:
+            status  = "skipped"
+            message = "DataFrame đầu vào rỗng."
+            log.warning(f"  [{name}] Bỏ qua — dữ liệu đầu vào rỗng.")
         else:
-            # 1a. Daily Play Stats — [2] partition theo play_date
-            log.info("  → daily_play_stats ...")
-            stats["daily_play_stats"] = save_gold(
-                agg_daily_play_stats(ph),
-                GOLD_PLAY_STATS, "daily_play_stats", date_col="play_date",
-            )
+            df_agg   = agg_fn(df)
+            rows_out = save_gold(df_agg, gold_path, name, date_str=date_str)
 
-            # 1b. Daily User Stats — [2] partition theo play_date
-            log.info("  → daily_user_stats ...")
-            stats["daily_user_stats"] = save_gold(
-                agg_daily_user_stats(ph),
-                GOLD_USER_STATS, "daily_user_stats", date_col="play_date",
-            )
+    except Exception as e:
+        status  = "failed"
+        message = str(e)
+        log.error(f"  [{name}] FAILED: {e}", exc_info=True)
 
-            # 1c. Hourly Stats — [2] partition theo play_date
-            log.info("  → hourly_stats ...")
-            stats["hourly_stats"] = save_gold(
-                agg_hourly_stats(ph),
-                GOLD_HOURLY, "hourly_stats", date_col="play_date",
-            )
-
-            # 1d. Daily Genre Stats — [2] partition theo play_date
-            log.info("  → daily_genre_stats ...")
-            stats["daily_genre_stats"] = save_gold(
-                agg_daily_genre_stats(ph),
-                GOLD_GENRE_STATS, "daily_genre_stats", date_col="play_date",
-            )
-
-    # ── 2. AD IMPRESSIONS ──────────────────────────────────────
-    log.info("\n[2/2] Đọc silver ad_impressions ...")
-    ad = load_silver_parquets(SILVER_AD_IMP, since)
-
-    if ad.empty:
-        log.warning("  ad_impressions Silver rỗng — bỏ qua.")
-        stats["daily_ad_stats"] = 0
-    else:
-        log.info(f"  Tổng rows ad_impressions: {len(ad):,}")
-        ad["shown_at"]   = pd.to_datetime(ad["shown_at"])
-        ad["is_clicked"] = ad["is_clicked"].astype(bool)
-
-        # [2] partition theo show_date
-        log.info("  → daily_ad_stats ...")
-        stats["daily_ad_stats"] = save_gold(
-            agg_daily_ad_stats(ad),
-            GOLD_AD_STATS, "daily_ad_stats", date_col="show_date",
+    finally:
+        db_finish_detail(
+            conn, detail_id,
+            status=status,
+            rows_in=rows_in,
+            rows_out=rows_out,
+            rows_error=rows_error,
+            message=message,
+            started_at=detail_started,
         )
 
-    # ── SUMMARY ────────────────────────────────────────────────
+    log.info(
+        f"--  [{name}]  {status.upper()}  "
+        f"(in={rows_in:,}, out={rows_out:,}, err={rows_error})  --\n"
+    )
+    return {"rows_in": rows_in, "rows_out": rows_out,
+            "rows_error": rows_error, "status": status}
+
+
+# ══════════════════════════════════════════════
+# ENTRYPOINT
+# ══════════════════════════════════════════════
+
+def run(triggered_by: str = "manual", target_date: str = None) -> dict:
+    log.info("=" * 60)
+    log.info("  PIPELINE 3: SILVER -> GOLD")
+    log.info("=" * 60 + "\n")
+
+    ensure_dirs()
+
+    try:
+        conn = get_db_connection()
+    except Exception as e:
+        log.error(f"[DB] Không thể kết nối PostgreSQL: {e}")
+        raise
+
+    pipeline_started = datetime.now()
+    run_id           = db_start_run(conn, triggered_by=triggered_by)
+
+    total_extracted   = 0
+    total_transformed = 0
+    total_loaded      = 0
+    total_failed      = 0
+    pipeline_status   = "success"
+    pipeline_error    = None
+    stats             = {}
+
+    try:
+        if not target_date:
+            target_date = datetime.now().strftime("%Y-%m-%d")
+            log.info(f"  Không truyền --date, dùng ngày hôm nay: {target_date}\n")
+
+        # ── 1. PLAY HISTORY ────────────────────────────────────────
+        log.info("[1/2] Đọc silver play_history ...")
+        ph_files = load_silver_parquets(SILVER_PLAY, target_date=target_date)
+        log.info(f"  Tìm thấy {len(ph_files)} file play_history.\n")
+
+        for date_str, ph_raw in ph_files:
+            log.info(f"  ── Xử lý play_history [{date_str}] ──")
+            rows_ph_raw      = len(ph_raw)
+            total_extracted += rows_ph_raw
+
+            # Cast kiểu dữ liệu
+            ph_raw["played_at"]       = pd.to_datetime(ph_raw["played_at"])
+            ph_raw["duration_played"] = pd.to_numeric(ph_raw["duration_played"], errors="coerce").fillna(0)
+            ph_raw["completion_rate"] = pd.to_numeric(ph_raw["completion_rate"], errors="coerce").fillna(0)
+            ph_raw["is_skipped"]      = ph_raw["is_skipped"].astype(bool)
+            ph_raw["is_completed"]    = ph_raw["is_completed"].astype(bool)
+
+            # Lọc lượt nghe hợp lệ
+            ph      = ph_raw[ph_raw["duration_played"] > MIN_LISTEN_SECONDS].copy()
+            dropped = rows_ph_raw - len(ph)
+            total_failed += dropped
+            log.info(
+                f"  Lọc > {MIN_LISTEN_SECONDS}s: "
+                f"giữ {len(ph):,} / {rows_ph_raw:,} rows  (loại {dropped:,})"
+            )
+
+            # 4 aggregation, file output đặt tên theo date_str
+            for name, agg_fn, gold_path in [
+                ("daily_play_stats",  agg_daily_play_stats,  GOLD_PLAY_STATS),
+                ("daily_user_stats",  agg_daily_user_stats,  GOLD_USER_STATS),
+                ("hourly_stats",      agg_hourly_stats,      GOLD_HOURLY),
+                ("daily_genre_stats", agg_daily_genre_stats, GOLD_GENRE_STATS),
+            ]:
+                result = process_aggregate(
+                    name=name, df=ph, agg_fn=agg_fn,
+                    gold_path=gold_path, date_str=date_str,
+                    conn=conn, run_id=run_id,
+                )
+                stats[f"{name}|{date_str}"] = result["rows_out"]
+                total_transformed          += result["rows_out"]
+                total_loaded               += result["rows_out"]
+                if result["status"] == "failed":
+                    pipeline_status = "failed"
+
+        # ── 2. AD IMPRESSIONS ──────────────────────────────────────
+        log.info("[2/2] Đọc silver ad_impressions ...")
+        ad_files = load_silver_parquets(SILVER_AD_IMP, target_date=target_date)
+        log.info(f"  Tìm thấy {len(ad_files)} file ad_impressions.\n")
+
+        for date_str, ad in ad_files:
+            log.info(f"  ── Xử lý ad_impressions [{date_str}] ──")
+            total_extracted += len(ad)
+
+            ad["shown_at"]   = pd.to_datetime(ad["shown_at"])
+            ad["is_clicked"] = ad["is_clicked"].astype(bool)
+
+            result = process_aggregate(
+                name="daily_ad_stats", df=ad, agg_fn=agg_daily_ad_stats,
+                gold_path=GOLD_AD_STATS, date_str=date_str,
+                conn=conn, run_id=run_id,
+            )
+            stats[f"daily_ad_stats|{date_str}"] = result["rows_out"]
+            total_transformed                   += result["rows_out"]
+            total_loaded                        += result["rows_out"]
+            if result["status"] == "failed":
+                pipeline_status = "failed"
+
+    except Exception as e:
+        pipeline_status = "failed"
+        pipeline_error  = str(e)
+        log.error(f"Pipeline gặp lỗi nghiêm trọng: {e}", exc_info=True)
+
+    finally:
+        db_finish_run(
+            conn,
+            run_id=run_id,
+            status=pipeline_status,
+            rows_extracted=total_extracted,
+            rows_transformed=total_transformed,
+            rows_loaded=total_loaded,
+            rows_failed=total_failed,
+            error_message=pipeline_error,
+            started_at=pipeline_started,
+        )
+        conn.close()
+        log.info("[DB] Đã đóng kết nối.")
+
     total_rows = sum(stats.values())
-    log.info("\n" + "=" * 60)
-    log.info("PIPELINE 3 HOÀN THÀNH")
+    log.info("=" * 60)
+    log.info(f"  Pipeline 3 hoàn thành — status={pipeline_status}")
     for k, v in stats.items():
-        log.info(f"  {k:<25} {v:>10,} rows")
-    log.info(f"  {'TỔNG':<25} {total_rows:>10,} rows")
+        log.info(f"    {k:<45} {v:>8,} rows")
+    log.info(f"    {'TỔNG':<45} {total_rows:>8,} rows")
+    log.info(f"  extracted={total_extracted:,}  loaded={total_loaded:,}  failed={total_failed:,}")
     log.info("=" * 60)
 
     return stats
 
 
 if __name__ == "__main__":
-    run()
+    parser = argparse.ArgumentParser(description="Pipeline 3: Silver to Gold")
+    parser.add_argument("--triggered_by", type=str, default="manual",
+                        help="Người/hệ thống trigger script")
+    parser.add_argument("--date", type=str, default=None,
+                        help="Target date để chạy ETL (YYYY-MM-DD)")
+
+    args, unknown = parser.parse_known_args()
+
+    trigger_source = args.triggered_by
+    if unknown and args.triggered_by == "manual":
+        trigger_source = unknown[0]
+
+    run(triggered_by=trigger_source, target_date=args.date)

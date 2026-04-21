@@ -314,7 +314,7 @@ def process_table(
 
     # Mở detail record trong DB
     detail_started = datetime.now()
-    detail_id = db_start_detail(conn, run_id, stage="transform", table_name=table)
+    detail_id = db_start_detail(conn, run_id, stage="bronze_to_silver", table_name=table)
 
     rows_in = rows_out = rows_error = 0
     status  = "success"
